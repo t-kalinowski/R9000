@@ -131,22 +131,23 @@ try(watch$lap_time <- NA)
 What works?
 
 + Single inheritance
-+ Multiple inheritance / mixin subclasses
-  (but no diamond problem, object resolution order is
-  flattened and fixed at instantiation time)
-+ Instances are callable if a `..call..` method is defined
-+ Active bindings are supported
-+ Double-dotted ("dottr") methods are auto invoked via S3
-+ `self` and `super` are in scope of all methods.
-+ `super` is available always, even at methods construction time
++ Multiple inheritance / mixin subclasses  
+  (object resolution order is flattened and fixed at instantiation time)
++ Instances are callable if a `..call..` method is defined.
++ Active bindings are supported.
++ Double-dotted ("dottr") methods are auto invoked via S3.
++ `self` and `super` are in scope of all methods. Both are callable and accessible with `$`.
 + `self` is available at initialization time.
++ `super` is available always, even at methods construction time.
++ `super("a_classname")` resolves a specific superclasses environment.
++ `self(...)` invokes `self$..call..(...)`.
 
 
 Inheritance example:
 ```{r}
 Class1 %class% {
   a_method <- function() {
-    writeLines("Called from Class1")
+    writeLines("Called Class1$a_method")
   }
 }
 
@@ -167,8 +168,35 @@ Class3(Class2) %class% {
 }
 
 x <- Class3()
+
+class(x)
+
 x$a_method()
+
+x
 ```
+
+
+Call `super()` to resolve a specific super class's environment.
+```{r}
+Skipper(Class3) %class% {
+  a_method <- function(to_classname = NULL) {
+    writeLines("Entering Skipper$a_method")
+    super(to_classname)$a_method()
+    writeLines("Exiting Skipper$a_method")
+  }
+}
+
+x <- Skipper()
+x$a_method()
+
+x$a_method("Class3") # equivalent to default of NULL
+
+x$a_method("Class2")
+
+x$a_method("Class1")
+```
+
 
 Mixin example:
 ```{r}
@@ -178,11 +206,9 @@ Mixin %class% {
   }
 }
 
-
 Class4(Class3, Mixin) %class% {
   a_method <- function() {
     writeLines("Entering Class4$a_method")
-    super$a_method()
     self$mixin_method()
     writeLines("Exiting Class4$a_method")
   }

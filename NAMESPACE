@@ -2,6 +2,7 @@
 
 S3method("!",R7)
 S3method("$",R7)
+S3method("$",R7_super)
 S3method("$<-",R7)
 S3method("&",R7)
 S3method("*",R7)

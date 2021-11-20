@@ -1,5 +1,4 @@
 
-
 .DollarNames.R7 <- function(x, pattern = "") {
   x <- environment(x)
   out <- names(x)
@@ -43,7 +42,7 @@ copy_over_env_elements <- function(from, to, skip = "super") {
       .grow(supr_cls)
 
     methods_env <- new.env(parent = cls$parent_env)
-    methods_env$super <- self_env
+    methods_env$super <- new_super(self_env)
     eval(cls$body, methods_env)
 
     self_env <<- new.env(parent = self_env)
@@ -76,7 +75,6 @@ copy_over_env_elements <- function(from, to, skip = "super") {
 
   self
 }
-
 
 #' @export
 `%class%` <- function(spec, body) {
@@ -133,7 +131,32 @@ copy_over_env_elements <- function(from, to, skip = "super") {
 #' @export
 `[[.R7` <- `$.R7`
 
+get_super_env <- function(self_env, classname = NULL) {
+  if(is.null(classname))
+    return(self_env)
+  stopifnot(is_string(classname))
+  repeat {
+    if (identical(classname, attr(self_env, "classname")))
+      break
+    if (identical(self_env, emptyenv()))
+      stop("Class does not inherit from ", classname)
+    self_env <- parent.env(self_env)
+  }
+  self_env
+}
 
+new_super <- function(self_env) {
+  super <- eval(substitute({
+    function(classname = NULL) get_super_env(self_env, classname)
+  }, list(get_super_env = get_super_env, self_env = self_env)))
+  class(super) <- "R7_super"
+  environment(super) <- self_env
+  super
+}
+
+
+#' @export
+`$.R7_super` <- `$.R7`
 
 #' @export
 dottr_s3_dispatcher <- function(name) {
@@ -186,3 +209,6 @@ print.R7 <- function(x, ...) {
     env_name <- attr(x, "classname")
   }
 }
+
+# TODO: make generator$* work it's methods callable like Class2$a_method(self, ...)
+# MAYBE: move dotter magic into %class%, call registerS3method() at class generator construction time.

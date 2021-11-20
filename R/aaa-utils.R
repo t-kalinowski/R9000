@@ -25,3 +25,5 @@
 `add<-` <- function (x, value) x + value
 
 catlf <- function(...) writeLines(sprintf(...))
+
+is_string <- function(x) is.character(x) && length(x) == 1
