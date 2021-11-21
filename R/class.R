@@ -98,13 +98,60 @@ copy_over_env_elements <- function(from, to, skip = "super") {
 
   spec <- new_class_spec(classname, body, parent_env, inherits)
 
-  instantiate <- function(...) {
-    self <- .instantiate(spec)
-    init <- get0("..init..", environment(self), mode = "function",
-                 ifnotfound = function() {})
-    init(...)
-    self
+  proto_self <- .instantiate(spec)
+
+  if (!exists("..init..", environment(proto_self), mode = "function")) {
+
+    instantiate <- function() .instantiate(spec)
+
+  } else {
+
+    instantiate <- as.function(local({
+
+      init <- get("..init..", environment(proto_self))
+      init_frmls <- formals(init)
+      init_args <- names(init_frmls)
+      names(init_args) <- init_args
+      init_args <- lapply(init_args, as.symbol)
+      if ("..." %in% names(init_args)) {
+        init_args[["..."]] <- quote(...)
+        names(init_args)[names(init_args) == "..."] <- ""
+      }
+
+      c(init_frmls, bquote({
+        self <- .instantiate(spec)
+        get("..init..", environment(self))(..(init_args))
+        self
+      }, splice = TRUE))
+    }))
+
   }
+
+  local({
+    proto_self_env <- environment(proto_self)
+    repeat {
+      # patch all methods to take `self` as first argument
+      for (nm in names(proto_self_env)) {
+        if (bindingIsActive(nm, proto_self_env)) {
+          fn <- activeBindingFunction(nm, proto_self_env)
+          rm(list = nm, envir = proto_self_env)
+        } else {
+          fn <- proto_self_env[[nm]]
+        }
+        if (is.function(fn)) {
+          formals(fn) <- c(alist(self = ), formals(fn))
+          if(!exists(nm, proto_self_env, inherits = FALSE))
+            class(fn) <- "R7_active_property_prototype"
+          proto_self_env[[nm]] <- fn
+        }
+      }
+
+      proto_self_env <- parent.env(proto_self_env)
+      if (identical(proto_self_env, emptyenv()))
+        break
+    }
+  })
+
   class(instantiate) <- c(paste0(classname, "_generator"),
                           "R7_generator")
   assign(classname, instantiate, envir = parent_env)
@@ -123,6 +170,11 @@ copy_over_env_elements <- function(from, to, skip = "super") {
   assign(name, value, envir = self_env,
          inherits = exists(name, envir = self_env))
   x
+}
+
+#' @export
+`$.R7_generator` <- function(x, name) {
+  get(name, environment(get("proto_self", environment(x))))
 }
 
 #' @export
@@ -210,5 +262,4 @@ print.R7 <- function(x, ...) {
   }
 }
 
-# TODO: make generator$* work it's methods callable like Class2$a_method(self, ...)
 # MAYBE: move dotter magic into %class%, call registerS3method() at class generator construction time.

@@ -78,11 +78,16 @@ Stopwatch %class% {
 }
 ```
 
-Calling `%class%` binds a class generator in the frame. Instantiate a
-class instance by calling the generator.
+Calling `%class%` binds a class generator in the frame. The class
+generator has an identical signature to `..init..()`, if it is defined.
+Instantiate a class instance by calling the generator.
 
 ``` r
-watch <- Stopwatch()
+str(formals(Stopwatch))
+#> Dotted pair list of 2
+#>  $ name : chr ""
+#>  $ start: logi FALSE
+watch <- Stopwatch("Nap time")
 ```
 
 The `print` method for class instances shows all resolvable objects from
@@ -93,7 +98,7 @@ watch
 #> class instance of type: <Stopwatch, R7>
 #> <self>:
 #>  $ .total    : 'difftime' num NA
-#>  $ name      : chr ""
+#>  $ name      : chr "Nap time"
 #>  $ running   : logi FALSE
 #>  $ start_time: POSIXct[1:1], format: NA
 #>  $ stop_time : POSIXct[1:1], format: NA
@@ -110,7 +115,7 @@ Invoke double dotted methods like `..format..()` via S3.
 
 ``` r
 cat(format(watch))
-#> Stopwatch: name = '', lap = NA secs, total = NULL, stopped
+#> Stopwatch: name = 'Nap time', lap = NA secs, total = NULL, stopped
 
 identical(format(watch), watch$..format..())
 #> [1] TRUE
@@ -121,17 +126,17 @@ A call of `self()` invokes `self$..call..()`.
 ``` r
 watch()
 cat(format(watch))
-#> Stopwatch: name = '', lap = 0.000312 secs, total = NULL, running
+#> Stopwatch: name = 'Nap time', lap = 0.000603 secs, total = NULL, running
 ```
 
 Active binding as properties.
 
 ``` r
 watch$lap_time
-#> Time difference of 0.002429008 secs
+#> Time difference of 0.004709959 secs
 Sys.sleep(1)
 watch$lap_time
-#> Time difference of 1.005045 secs
+#> Time difference of 1.012263 secs
 try(watch$lap_time <- NA)
 #> Error in (function (x)  : Protected property
 ```
@@ -151,6 +156,11 @@ What works?
 -   `super` is available always, even at methods construction time.
 -   `super("a_classname")` resolves a specific superclasses environment.
 -   `self(...)` invokes `self$..call..(...)`.
+-   The instance generator has the signature of `..init..()` if it is
+    defined.
+-   Instance generator has `$` method that lets you access methods
+    directly,  
+    bypassing instantiation.
 
 Inheritance example:
 
@@ -288,4 +298,31 @@ x$mixin_method()
 
 class(x)
 #> [1] "Class4" "Class3" "Class2" "Class1" "Mixin"  "R7"
+```
+
+Access class methods directly from the class generator, without
+instantiation.
+
+``` r
+Class1$a_method()
+#> Called Class1$a_method
+```
+
+Pass an instance of `self` as the first argument when accessing a method
+directly from the class generator and not from a class instance:
+
+``` r
+Stopwatch$..format..(watch)
+#> [1] "Stopwatch: name = 'Nap time', lap = 1.05 secs, total = NULL, running"
+```
+
+Active properties lose their “activeness” when invoked directly from the
+class generator, but also gain the ability to take an instance of `self`
+as the first argument.
+
+``` r
+class(Stopwatch$lap_time)
+#> [1] "R7_active_property_prototype"
+Stopwatch$lap_time(self = watch)
+#> Time difference of 1.054029 secs
 ```

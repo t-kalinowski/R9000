@@ -89,10 +89,12 @@ Stopwatch %class% {
 ```
 
 Calling `%class%` binds a class generator in the frame.
+The class generator has an identical signature to `..init..()`, if it is defined.
 Instantiate a class instance by calling the generator.
 
 ```{r}
-watch <- Stopwatch()
+str(formals(Stopwatch))
+watch <- Stopwatch("Nap time")
 ```
 
 The `print` method for class instances shows all
@@ -141,6 +143,9 @@ What works?
 + `super` is available always, even at methods construction time.
 + `super("a_classname")` resolves a specific superclasses environment.
 + `self(...)` invokes `self$..call..(...)`.
++ The instance generator has the signature of `..init..()` if it is defined.
++ Instance generator has `$` method that lets you access methods directly,  
+  bypassing instantiation.
 
 
 Inheritance example:
@@ -224,3 +229,20 @@ x$mixin_method()
 
 class(x)
 ```
+
+Access class methods directly from the class generator, without instantiation.
+
+```{r}
+Class1$a_method()
+```
+
+Pass an instance of `self` as the first argument when accessing a method directly from the class generator and not from a class instance:
+```{r}
+Stopwatch$..format..(watch)
+```
+Active properties lose their "activeness" when invoked directly from the class generator, but also gain the ability to take an instance of `self` as the first argument.
+```{r}
+class(Stopwatch$lap_time)
+Stopwatch$lap_time(self = watch)
+```
+
