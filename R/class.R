@@ -1,5 +1,15 @@
 
+#' @export
 .DollarNames.R7 <- function(x, pattern = "") {
+  out <- names.R7(x)
+  if(pattern == "")
+    out
+  else
+    grep(pattern, out, value = TRUE)
+}
+
+#' @export
+names.R7 <- function(x) {
   x <- environment(x)
   out <- names(x)
   repeat {
@@ -7,10 +17,7 @@
     if(identical(x, emptyenv())) break
     out <- c(out, names(x))
   }
-  if(pattern == "")
-    out
-  else
-    grep(pattern, out, value = TRUE)
+  out
 }
 
 
@@ -20,10 +27,10 @@ new_class_spec <- function(classname, body, parent_env, inherits) {
 
 copy_over_env_elements <- function(from, to, skip = "super") {
   for (nm in setdiff(names(from), skip)) {
-    if (bindingIsActive(nm, from)) {
+    if (bindingIsActive(nm, from))
       makeActiveBinding(nm, activeBindingFunction(nm, from), to)
-    } else
-      to[[nm]] <- from[[nm]]
+    else if (!is.null(val <- from[[nm]]))
+      to[[nm]] <- val
   }
 }
 
@@ -38,6 +45,7 @@ copy_over_env_elements <- function(from, to, skip = "super") {
 
     if(inherits(cls, "R7_generator"))
       cls <- get("spec", environment(cls))
+
     for(supr_cls in rev(cls$inherits))
       .grow(supr_cls)
 
@@ -110,27 +118,64 @@ copy_over_env_elements <- function(from, to, skip = "super") {
 
       init <- get("..init..", environment(proto_self))
       init_frmls <- formals(init)
-      init_args <- names(init_frmls)
-      names(init_args) <- init_args
-      init_args <- lapply(init_args, as.symbol)
-      if ("..." %in% names(init_args)) {
-        init_args[["..."]] <- quote(...)
-        names(init_args)[names(init_args) == "..."] <- ""
-      }
+      init_call <- pass_through_call(
+        quote(get("..init..", environment(self))),
+        names(init_frmls)
+      )
 
       c(init_frmls, bquote({
         self <- .instantiate(spec)
-        get("..init..", environment(self))(..(init_args))
+        .(init_call)
         self
-      }, splice = TRUE))
+      }))
     }))
 
   }
 
+
+  # register dottr s3 methods
+  local({
+    this_class_methods <-
+      parent.env(environment(proto_self)) # not superclasses
+
+    for (..name.. in grep("^\\.\\..+\\.\\.$",
+                          names(this_class_methods),
+                          value = TRUE)) {
+      name <- substr(..name.., 3L, nchar(..name..) - 2L)
+      if (name %in% c("init", "call"))
+        next
+
+      generic <- get0(name, parent_env, ifnotfound = function(x) {})
+      generic_frmls <- formals(args(generic) %||% function(x, ...) {})
+      dispatch_sym <- names(generic_frmls)[1]
+
+      if (dispatch_sym == "...") {
+        dispatch_sym <- "x"
+        generic_frmls <-  alist(x = , ... = )
+      }
+
+      dispatch_sym <- as.symbol(dispatch_sym)
+
+      method <- this_class_methods[[..name..]]
+
+      body <- pass_through_call(
+        fn_expr = bquote(get(.(..name..), environment( .(dispatch_sym) ))),
+        arg_nms = names(formals(method)))
+      dispatch_frml <- alist(self = )
+      names(dispatch_frml) <- names(generic_frmls)[1]
+      s3_method <- as.function.default(
+        c(dispatch_frml, formals(method), body),
+        parent_env)
+
+      registerS3method(name, classname, s3_method, parent_env)
+    }
+  })
+
+
+  # patch all proto_self$methods() to take `self` as first argument
   local({
     proto_self_env <- environment(proto_self)
     repeat {
-      # patch all methods to take `self` as first argument
       for (nm in names(proto_self_env)) {
         if (bindingIsActive(nm, proto_self_env)) {
           fn <- activeBindingFunction(nm, proto_self_env)
@@ -151,6 +196,7 @@ copy_over_env_elements <- function(from, to, skip = "super") {
         break
     }
   })
+
 
   class(instantiate) <- c(paste0(classname, "_generator"),
                           "R7_generator")
@@ -186,15 +232,15 @@ copy_over_env_elements <- function(from, to, skip = "super") {
 get_super_env <- function(self_env, classname = NULL) {
   if(is.null(classname))
     return(self_env)
-  stopifnot(is_string(classname))
-  repeat {
-    if (identical(classname, attr(self_env, "classname")))
-      break
-    if (identical(self_env, emptyenv()))
-      stop("Class does not inherit from ", classname)
-    self_env <- parent.env(self_env)
-  }
-  self_env
+    stopifnot(is_string(classname))
+    repeat {
+      if (identical(classname, attr(self_env, "classname")))
+        break
+      if (identical(self_env, emptyenv()))
+        stop("Class does not inherit from ", classname)
+      self_env <- parent.env(self_env)
+    }
+    self_env
 }
 
 new_super <- function(self_env) {
@@ -210,30 +256,6 @@ new_super <- function(self_env) {
 #' @export
 `$.R7_super` <- `$.R7`
 
-#' @export
-dottr_s3_dispatcher <- function(name) {
-  ..name.. <- sprintf("..%s..", name)
-  fn <- get(name, mode = "function")
-  frmls <- formals(args(fn) %||% function(...) {})
-
-  x_sym <- as.symbol(names(frmls)[[1]])
-  if(identical(x_sym, quote(...)))
-    x_sym <- quote(..1)
-
-  args <- names(frmls)[-1]
-  names(args) <- args
-  args <- lapply(args, as.symbol)
-  if("..." %in% names(args))
-    args[["..."]] <- quote(expr = )
-
-  body <- bquote({
-    if (exists(.(..name..), envir = environment(.(x_sym))))
-      get(.(..name..), envir = environment(.(x_sym)))(..(args))
-    else
-      NextMethod()
-  }, splice = TRUE)
-  as.function(c(frmls, body), parent.frame())
-}
 
 
 #' @export
@@ -262,4 +284,15 @@ print.R7 <- function(x, ...) {
   }
 }
 
-# MAYBE: move dotter magic into %class%, call registerS3method() at class generator construction time.
+pass_through_call <- function(fn_expr, arg_nms) {
+
+  if(!length(arg_nms))
+    return(as.call(list(fn_expr)))
+
+  stopifnot(is.character(arg_nms))
+  args <- lapply(arg_nms, as.symbol)
+  names(args) <- arg_nms
+  names(args)[names(args) == "..."] <- ""
+
+  as.call(c(list(fn_expr), args))
+}

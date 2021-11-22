@@ -45,6 +45,7 @@ Stopwatch %class% {
     if (start)
       self()
   }
+
   ..call.. <- function() {
     # self() toggles start/stop
     if (self$running) {
@@ -70,17 +71,17 @@ Stopwatch %class% {
     if (!missing(x))
       stop("Protected property")
     if (self$running)
-      self$.total + lap_time()
+      self$.total + lap_time
     else
       self$.total
   }
 
-  ..format.. <- function(x, ...) {
+  ..format.. <- function(..., digits = 3) {
     sprintf(
       "Stopwatch: name = '%s', lap = %s, total = %s, %s",
       self$name,
-      format(self$lap_time, digits = 3),
-      format(self$total, digits = 3),
+      format(self$lap_time, digits = digits, ...),
+      format(self$total, digits = digits, ...),
       if (self$running) "running" else "stopped")
   }
 
@@ -137,14 +138,18 @@ What works?
   (object resolution order is flattened and fixed at instantiation time)
 + Instances are callable if a `..call..` method is defined.
 + Active bindings are supported.
-+ Double-dotted ("dottr") methods are auto invoked via S3.
-+ `self` and `super` are in scope of all methods. Both are callable and accessible with `$`.
++ Private attributes are supported.
++ Public attributes (callable or otherwise) autocomplete after `$`  
+  (via `.DollarNames()` and `names()` methods)
++ Double-dotted ("dottr") methods are auto registered as S3 methods.
++ `self` and `super` are in scope of all methods.
+  Both are callable and accessible with `$`.
 + `self` is available at initialization time.
 + `super` is available always, even at methods construction time.
-+ `super("a_classname")` resolves a specific superclasses environment.
++ `super("a_classname")` resolves a specific superclasses public environment.
 + `self(...)` invokes `self$..call..(...)`.
 + The instance generator has the signature of `..init..()` if it is defined.
-+ Instance generator has `$` method that lets you access methods directly,  
++ Instance generator has `$` method that lets you access methods directly,
   bypassing instantiation.
 
 
@@ -206,7 +211,7 @@ x$a_method("Class1")
 Mixin example:
 ```{r}
 Mixin %class% {
-  mixin_method <- function(x, name) {
+  mixin_method <- function() {
     cat("Called mixin_method\n")
   }
 }
@@ -246,3 +251,58 @@ class(Stopwatch$lap_time)
 Stopwatch$lap_time(self = watch)
 ```
 
+Example of defining a class with private attributes, `$`, and `$<-` methods.
+
+```{r}
+URLBuilder %class% {
+  # properties initialized to NULL in the class definition body stay private
+  # they can be:
+  #  - accessed directly from within methods,
+  #  - set from methods with <<-
+  name <- root <- NULL
+
+  ..init.. <- function(name, root = NULL) {
+    name <<- name
+    root <<- root
+  }
+
+  "..$.." <- function(name) URLBuilder(name, self)
+
+  ..call.. <- function() {
+    # just print to stdout for fun, doesn't actually interact w/ api.
+    cat("GET ", ..format..(), "\n")
+  }
+
+  "..$<-.." <- function(name, value) {
+    if (!inherits(value, "URLBuilder"))
+      cat("POST", format(URLBuilder(name, self)), value, "\n")
+    self
+  }
+
+  ..format.. <- function() {
+    components <- name
+    private_env <- parent.env(environment())
+    repeat {
+
+      # reach in for the private env of `root`'s URLBuilder methods
+      private_env <- attr(parent.env(environment(root)), "methods_env")
+
+      # Maybe `super()` should support this? something like
+      # private_env <- super("URLBuilder", self = root, private = TRUE)
+
+      append1(components) <- get("name", private_env)
+      root <- get("root", private_env)
+      if (is.null(root))
+        break
+    }
+    paste0(rev(components), collapse = "/")
+  }
+}
+
+
+gh <- URLBuilder("https://api.github.com")
+
+gh$orgs$"r-lib"$fs()
+
+gh$orgs$"r-lib"$fs <- "SOME DATA"
+```
