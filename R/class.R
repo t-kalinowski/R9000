@@ -62,6 +62,9 @@ copy_over_env_elements <- function(from, to, skip = "super") {
   }
 
   .grow(cls)
+
+  # frontmost self starts empty, it's where non-private attributes set in init()
+  # like self$new_foo<- will live
   self_env <- new.env(parent = self_env)
 
   self <- as.function.default(c(
@@ -172,22 +175,55 @@ copy_over_env_elements <- function(from, to, skip = "super") {
   })
 
 
-  # patch all proto_self$methods() to take `self` as first argument
+  # - patch all proto_self$methods() to:
+  #   1) take `self` as first argument
+  #   2) maybe dispatch to `self$method` if self is of the appropriate class
+  # - make all private attributes into active bindings that throw errors
   local({
     proto_self_env <- environment(proto_self)
     repeat {
       for (nm in names(proto_self_env)) {
         if (bindingIsActive(nm, proto_self_env)) {
-          fn <- activeBindingFunction(nm, proto_self_env)
+          atr <- activeBindingFunction(nm, proto_self_env)
           rm(list = nm, envir = proto_self_env)
         } else {
-          fn <- proto_self_env[[nm]]
+          atr <- proto_self_env[[nm]]
         }
-        if (is.function(fn)) {
+        if (is.function(atr)) {
+          fn <- atr
+          if(!exists(nm, proto_self_env, inherits = FALSE)) {
+            # active binding
+            arg_sym <- as.symbol(names(formals(fn))[1])
+            dispatch_expr <- bquote(
+              if(missing(.(arg_sym)))
+                get(.(nm), super(.(classname), self), inherits = FALSE)
+              else
+                assign(.(nm), .(arg_sym), super(.(classname), self))
+            )
+          } else {
+            # standard method
+            dispatch_expr <- pass_through_call(
+              bquote(super(.(classname), self)[[.(nm)]]),
+              names(formals(fn)))
+          }
+          maybe_dispatch_expr <-  bquote(
+            if(!missing(self) && inherits(self, .(classname)))
+              return(.(dispatch_expr))
+          )
+          body(fn) <- bquote({
+            .(maybe_dispatch_expr)
+            .(body(fn))
+          })
           formals(fn) <- c(alist(self = ), formals(fn))
           if(!exists(nm, proto_self_env, inherits = FALSE))
             class(fn) <- "R7_active_property_prototype"
           proto_self_env[[nm]] <- fn
+        } else if (is.null(atr)) {
+          msg <- sprintf(
+            "private binding '%s' can can only be accessed from a class instance",
+            nm)
+          fn <- as.function.default(c(alist(x=), bquote(stop(.(msg))), baseenv()))
+          makeActiveBinding(name, fn, proto_self_env)
         }
       }
 
@@ -218,6 +254,7 @@ copy_over_env_elements <- function(from, to, skip = "super") {
   x
 }
 
+
 #' @export
 `$.R7_generator` <- function(x, name) {
   get(name, environment(get("proto_self", environment(x))))
@@ -229,9 +266,10 @@ copy_over_env_elements <- function(from, to, skip = "super") {
 #' @export
 `[[.R7` <- `$.R7`
 
-get_super_env <- function(self_env, classname = NULL) {
-  if(is.null(classname))
-    return(self_env)
+get_super_env <- function(self_env, classname, self, private) {
+  if(!is.null(self))
+    self_env <- environment(self)
+  if (!is.null(classname)) {
     stopifnot(is_string(classname))
     repeat {
       if (identical(classname, attr(self_env, "classname")))
@@ -240,12 +278,17 @@ get_super_env <- function(self_env, classname = NULL) {
         stop("Class does not inherit from ", classname)
       self_env <- parent.env(self_env)
     }
+  }
+  if (private)
+    attr(self_env, "methods_env")
+  else
     self_env
 }
 
 new_super <- function(self_env) {
   super <- eval(substitute({
-    function(classname = NULL) get_super_env(self_env, classname)
+    function(classname = NULL, self = NULL, ..., private = FALSE)
+      get_super_env(self_env, classname, self, private, ...)
   }, list(get_super_env = get_super_env, self_env = self_env)))
   class(super) <- "R7_super"
   environment(super) <- self_env

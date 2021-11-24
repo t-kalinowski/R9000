@@ -26,13 +26,16 @@ is what it looks like:
 library(R9000)
 
 Stopwatch %class% {
+  
+  total_previous_laps <- NULL # private attribute
+  
   ..init.. <- function(name = "", start = FALSE) {
-    self$name <- name
-    self$running <- FALSE
-    self$start_time <- .POSIXct(NA_real_)
+    self$name <- name # set public attributes
+    self$start_time <- 
     self$stop_time <- .POSIXct(NA_real_)
-    self$.total <- lap_time
-    if (start)
+    self$running <- FALSE
+    total_previous_laps <<- lap_time
+    if (start) 
       self()
   }
 
@@ -40,7 +43,7 @@ Stopwatch %class% {
     # self() toggles start/stop
     if (self$running) {
       self$stop_time <- Sys.time()
-      add(self$.total) <-  self$stop_time - self$start_time
+      add(total_previous_laps) <<- self$stop_time - self$start_time
     } else {
       self$start_time <- Sys.time()
     }
@@ -49,21 +52,18 @@ Stopwatch %class% {
   }
 
   lap_time %<-active% function(x) {
-    if (!missing(x))
-      stop("Protected property")
-    if (self$running)
-      Sys.time() - self$start_time
-    else
-      self$stop_time - self$start_time
+    if (!missing(x)) stop("Protected property")
+    
+    if (self$running) Sys.time() - self$start_time
+    else if (is.na(self$start_time)) 0
+    else self$stop_time - self$start_time
   }
 
    total_time %<-active% function(x) {
-    if (!missing(x))
-      stop("Protected property")
-    if (self$running)
-      self$.total + lap_time
-    else
-      self$.total
+    if (!missing(x)) stop("Protected property")
+     
+    if (self$running) total_previous_laps + lap_time
+    else total_previous_laps
   }
 
   ..format.. <- function(..., digits = 3) {
@@ -71,7 +71,7 @@ Stopwatch %class% {
       "Stopwatch: name = '%s', lap = %s, total = %s, %s",
       self$name,
       format(self$lap_time, digits = digits, ...),
-      format(self$total, digits = digits, ...),
+      format(self$total_time, digits = digits, ...),
       if (self$running) "running" else "stopped")
   }
 
@@ -98,7 +98,6 @@ The `print` method for class instances shows all resolvable objects from
 watch
 #> class instance of type: <Stopwatch, R7>
 #> <self>:
-#>  $ .total    : 'difftime' num NA
 #>  $ name      : chr "Nap time"
 #>  $ running   : logi FALSE
 #>  $ start_time: POSIXct[1:1], format: NA
@@ -107,16 +106,16 @@ watch
 #>  $ ..call..           :function ()  
 #>  $ ..format..         :function (..., digits = 3)  
 #>  $ ..init..           :function (name = "", start = FALSE)  
-#>  $ lap_time (active)  : 'difftime' num NA
+#>  $ lap_time (active)  : num 0
 #>  $ reset              :function (name = "", start = FALSE)  
-#>  $ total_time (active): 'difftime' num NA
+#>  $ total_time (active): num 0
 ```
 
 Invoke double dotted methods like `..format..()` via S3.
 
 ``` r
 cat(format(watch))
-#> Stopwatch: name = 'Nap time', lap = NA secs, total = NULL, stopped
+#> Stopwatch: name = 'Nap time', lap = 0, total = 0, stopped
 
 identical(format(watch), watch$..format..())
 #> [1] TRUE
@@ -127,17 +126,17 @@ A call of `self()` invokes `self$..call..()`.
 ``` r
 watch()
 cat(format(watch))
-#> Stopwatch: name = 'Nap time', lap = 0.000333 secs, total = NULL, running
+#> Stopwatch: name = 'Nap time', lap = 0.000353 secs, total = 0.000605 secs, running
 ```
 
 Active binding as properties.
 
 ``` r
 watch$lap_time
-#> Time difference of 0.002333164 secs
+#> Time difference of 0.002830982 secs
 Sys.sleep(1)
 watch$lap_time
-#> Time difference of 1.006795 secs
+#> Time difference of 1.009485 secs
 try(watch$lap_time <- NA)
 #> Error in (function (x)  : Protected property
 ```
@@ -145,13 +144,12 @@ try(watch$lap_time <- NA)
 What works?
 
 -   Single inheritance
--   Multiple inheritance / mixin subclasses  
-    (object resolution order is flattened and fixed at instantiation
-    time)
+-   Multiple inheritance / mixin subclasses (object resolution order is
+    flattened and fixed at instantiation time)
 -   Instances are callable if a `..call..` method is defined.
 -   Active bindings are supported.
 -   Private attributes are supported.
--   Public attributes (callable or otherwise) autocomplete after `$`  
+-   Public attributes (callable or otherwise) autocomplete after `$`
     (via `.DollarNames()` and `names()` methods)
 -   Double-dotted (“dottr”) methods are auto registered as S3 methods.
 -   `self` and `super` are in scope of all methods. Both are callable
@@ -317,7 +315,7 @@ directly from the class generator and not from a class instance:
 
 ``` r
 Stopwatch$..format..(watch)
-#> [1] "Stopwatch: name = 'Nap time', lap = 1.05 secs, total = NULL, running"
+#> [1] "Stopwatch: name = 'Nap time', lap = 1.04 secs, total = 1.04 secs, running"
 ```
 
 Active properties lose their “activeness” when invoked directly from the
@@ -328,7 +326,14 @@ as the first argument.
 class(Stopwatch$lap_time)
 #> [1] "R7_active_property_prototype"
 Stopwatch$lap_time(self = watch)
-#> Time difference of 1.052607 secs
+#> Time difference of 1.046891 secs
+```
+
+Even methods that access private properties
+
+``` r
+Stopwatch$total_time(self = watch)
+#> Time difference of 1.048784 secs
 ```
 
 Example of defining a class with private attributes, `$`, and `$<-`
@@ -364,12 +369,8 @@ URLBuilder %class% {
     components <- name
     private_env <- parent.env(environment())
     repeat {
-
       # reach in for the private env of `root`'s URLBuilder methods
-      private_env <- attr(parent.env(environment(root)), "methods_env")
-
-      # Maybe `super()` should support this? something like
-      # private_env <- super("URLBuilder", self = root, private = TRUE)
+      private_env <- super("URLBuilder", root, private = TRUE)
 
       append1(components) <- get("name", private_env)
       root <- get("root", private_env)
